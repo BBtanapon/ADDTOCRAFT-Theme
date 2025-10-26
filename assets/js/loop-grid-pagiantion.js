@@ -1,6 +1,6 @@
 /**
- * Loop Grid Pagination - FIXED Load More Function
- * Complete working version for Elementor Loop Grid
+ * Loop Grid Pagination - COMPLETE FIX v3
+ * Load More & Infinite Scroll - Both Working
  *
  * @package HelloElementorChild
  */
@@ -8,26 +8,59 @@
 (function ($) {
 	"use strict";
 
-	class LoopGridPaginationFixed {
+	console.log(
+		"%c🚀 Pagination Script Loaded",
+		"color: #4CAF50; font-weight: bold; font-size: 16px;",
+	);
+
+	// Check if loopGridPaginationData exists
+	if (typeof loopGridPaginationData === "undefined") {
+		console.error(
+			"❌ loopGridPaginationData is not defined! Make sure wp_localize_script is working.",
+		);
+		return;
+	}
+
+	console.log("✅ AJAX URL:", loopGridPaginationData.ajaxUrl);
+	console.log("✅ Nonce:", loopGridPaginationData.nonce);
+
+	class LoopGridPagination {
 		constructor(wrapper) {
 			this.$wrapper = $(wrapper);
 			this.widgetId = this.$wrapper.data("widget-id");
-			this.targetId = this.$wrapper.data("target");
 			this.paginationType = this.$wrapper.data("pagination-type");
 			this.currentPage =
 				parseInt(this.$wrapper.data("current-page")) || 1;
 			this.maxPages = parseInt(this.$wrapper.data("max-pages")) || 1;
 
-			// Decode base64 query args and settings
+			console.group("🎯 Initializing Pagination");
+			console.log("Widget ID:", this.widgetId);
+			console.log("Type:", this.paginationType);
+			console.log("Current Page:", this.currentPage);
+			console.log("Max Pages:", this.maxPages);
+
+			// Decode query args
 			try {
-				this.queryArgs = JSON.parse(
-					atob(this.$wrapper.data("query") || ""),
-				);
-				this.settings = JSON.parse(
-					atob(this.$wrapper.data("settings") || ""),
-				);
+				const queryData = this.$wrapper.data("query");
+				const settingsData = this.$wrapper.data("settings");
+
+				if (queryData) {
+					this.queryArgs = JSON.parse(atob(queryData));
+					console.log("✅ Query Args Decoded:", this.queryArgs);
+				} else {
+					this.queryArgs = {};
+					console.warn("⚠️ No query data found");
+				}
+
+				if (settingsData) {
+					this.settings = JSON.parse(atob(settingsData));
+					console.log("✅ Settings Decoded:", this.settings);
+				} else {
+					this.settings = {};
+					console.warn("⚠️ No settings data found");
+				}
 			} catch (e) {
-				console.error("Error decoding pagination data:", e);
+				console.error("❌ Error decoding data:", e);
 				this.queryArgs = {};
 				this.settings = {};
 			}
@@ -35,12 +68,8 @@
 			this.$grid = this.$wrapper.find(".custom-product-loop-grid");
 			this.isLoading = false;
 
-			console.log("🔄 Pagination Init:", {
-				type: this.paginationType,
-				currentPage: this.currentPage,
-				maxPages: this.maxPages,
-				gridFound: this.$grid.length > 0,
-			});
+			console.log("Grid found:", this.$grid.length > 0);
+			console.groupEnd();
 
 			this.init();
 		}
@@ -50,6 +79,11 @@
 				console.log("⏭️ Pagination disabled or only 1 page");
 				return;
 			}
+
+			console.log(
+				"🔧 Initializing pagination type:",
+				this.paginationType,
+			);
 
 			switch (this.paginationType) {
 				case "load_more":
@@ -65,58 +99,66 @@
 		}
 
 		initLoadMore() {
-			console.log("📦 Initializing Load More button");
+			console.log("📦 Setting up Load More button...");
 
 			const $btn = this.$wrapper.find(".loop-load-more-btn");
 
 			if ($btn.length === 0) {
-				console.error("❌ Load More button not found");
+				console.error("❌ Load More button not found!");
+				console.log(
+					"Wrapper HTML:",
+					this.$wrapper.html().substring(0, 500),
+				);
 				return;
 			}
 
-			console.log("✅ Load More button found and bound");
+			console.log("✅ Load More button found:", $btn);
+			console.log("Button HTML:", $btn[0].outerHTML);
 
-			// Remove any existing click handlers
-			$btn.off("click");
+			// Remove existing handlers
+			$btn.off("click.pagination");
 
-			$btn.on("click", (e) => {
+			// Bind click event
+			$btn.on("click.pagination", (e) => {
 				e.preventDefault();
 				e.stopPropagation();
 
+				console.log("🖱️ LOAD MORE CLICKED!");
+
 				if (this.isLoading) {
-					console.log("⏳ Already loading, please wait...");
+					console.log("⏳ Already loading...");
 					return;
 				}
 
 				const nextPage = this.currentPage + 1;
-				console.log(`📄 Loading page ${nextPage}/${this.maxPages}`);
 
 				if (nextPage > this.maxPages) {
-					console.log("✅ All products loaded");
+					console.log("✅ No more pages");
 					$btn.hide();
 					this.showNoMoreMessage();
 					return;
 				}
 
+				console.log(`📄 Loading page ${nextPage}/${this.maxPages}`);
 				this.loadMoreProducts(nextPage, $btn);
 			});
 
-			// Update button data attribute
-			$btn.data("page", this.currentPage);
-			console.log("✅ Load More initialized successfully");
+			console.log("✅ Load More initialized successfully!");
 		}
 
 		initInfiniteScroll() {
-			console.log("♾️ Initializing Infinite Scroll");
+			console.log("♾️ Setting up Infinite Scroll...");
 
 			const $trigger = this.$wrapper.find(
 				".loop-infinite-scroll-trigger",
 			);
 
 			if ($trigger.length === 0) {
-				console.warn("⚠️ Infinite scroll trigger not found");
+				console.error("❌ Infinite scroll trigger not found!");
 				return;
 			}
+
+			console.log("✅ Trigger found:", $trigger);
 
 			const threshold = $trigger.data("threshold") || 300;
 
@@ -127,17 +169,13 @@
 							const nextPage = this.currentPage + 1;
 
 							if (nextPage > this.maxPages) {
-								console.log(
-									"✅ All products loaded - stopping infinite scroll",
-								);
+								console.log("✅ All products loaded");
 								this.showNoMoreMessage();
 								observer.disconnect();
 								return;
 							}
 
-							console.log(
-								`📄 Infinite scroll loading page ${nextPage}`,
-							);
+							console.log(`♾️ Loading page ${nextPage}`);
 							this.loadMoreProducts(nextPage, $trigger);
 						}
 					});
@@ -148,115 +186,108 @@
 			);
 
 			observer.observe($trigger[0]);
-			console.log("✅ Infinite scroll initialized");
+			console.log("✅ Infinite scroll observer active!");
 		}
 
 		loadMoreProducts(page, $element) {
-			console.log(`🔄 Loading products for page ${page}...`);
+			console.group(`🔄 Loading Page ${page}`);
+			console.log("AJAX URL:", loopGridPaginationData.ajaxUrl);
+			console.log("Nonce:", loopGridPaginationData.nonce);
+			console.log("Query Args:", this.queryArgs);
+			console.log("Settings:", this.settings);
 
 			this.isLoading = true;
 			this.showLoadingMessage();
 
-			// Hide load more button while loading
+			// Disable button
 			if (this.paginationType === "load_more") {
-				this.$wrapper.find(".loop-load-more-btn").hide();
+				$element.prop("disabled", true).css("opacity", "0.5");
 			}
+
+			const ajaxData = {
+				action: "load_more_products",
+				nonce: loopGridPaginationData.nonce,
+				page: page,
+				query_args: JSON.stringify(this.queryArgs),
+				settings: JSON.stringify(this.settings),
+				widget_id: this.widgetId,
+			};
+
+			console.log("Sending AJAX data:", ajaxData);
 
 			$.ajax({
 				url: loopGridPaginationData.ajaxUrl,
 				type: "POST",
-				data: {
-					action: "load_more_products",
-					nonce: loopGridPaginationData.nonce,
-					page: page,
-					query_args: JSON.stringify(this.queryArgs),
-					settings: JSON.stringify(this.settings),
-					widget_id: this.widgetId,
-				},
+				data: ajaxData,
 				success: (response) => {
-					console.log("✅ AJAX success:", response);
+					console.log("✅ AJAX Response:", response);
 
 					if (response.success && response.data.html) {
+						console.log(
+							"✅ HTML received, length:",
+							response.data.html.length,
+						);
 						this.appendProducts(response.data.html);
 						this.currentPage = page;
-						$element.data("page", page);
+						this.$wrapper.data("current-page", page);
 
-						// Check if there are more pages
 						if (page >= this.maxPages) {
-							console.log("📊 Reached max pages");
+							console.log("📊 Reached last page");
 							this.showNoMoreMessage();
 							if (this.paginationType === "load_more") {
-								this.$wrapper
-									.find(".loop-load-more-btn")
-									.hide();
+								$element.hide();
 							}
 						} else {
-							// Show load more button again
 							if (this.paginationType === "load_more") {
-								this.$wrapper
-									.find(".loop-load-more-btn")
-									.show();
+								$element
+									.prop("disabled", false)
+									.css("opacity", "1");
 							}
 						}
 					} else {
-						console.error(
-							"❌ Failed to load products:",
-							response.data,
-						);
-						this.showNoMoreMessage();
+						console.error("❌ Invalid response:", response);
 					}
 				},
 				error: (xhr, status, error) => {
-					console.error("❌ AJAX error:", error);
+					console.error("❌ AJAX Error:", error);
 					console.error("Status:", status);
-					console.error("Response:", xhr.responseText);
-					alert("Error loading products. Please try again.");
+					console.error("Response Text:", xhr.responseText);
+					alert("Error loading products. Check console for details.");
+
 					if (this.paginationType === "load_more") {
-						this.$wrapper.find(".loop-load-more-btn").show();
+						$element.prop("disabled", false).css("opacity", "1");
 					}
 				},
 				complete: () => {
 					this.isLoading = false;
 					this.hideLoadingMessage();
+					console.groupEnd();
 				},
 			});
 		}
 
 		appendProducts(html) {
-			console.log("🔨 Appending products to grid");
+			console.log("🔨 Appending products...");
 
 			const $newProducts = $(html);
+			console.log("New products count:", $newProducts.length);
 
-			// Apply auto-attributes to new products
+			// Apply data attributes if needed
 			if (window.loopGridProductsData) {
 				$newProducts.each((index, item) => {
 					const $item = $(item);
-					const productId =
-						$item.data("product-id") ||
-						$item.attr("data-product-id");
+					const productId = $item.data("product-id");
 
 					if (productId && window.loopGridProductsData[productId]) {
 						const data = window.loopGridProductsData[productId];
 						$item.data("product-id", data.id);
 						$item.data("title", data.title || "");
 						$item.data("price", data.price || "0");
-						$item.data(
-							"regular-price",
-							data.regular_price || data.price || "0",
-						);
-						$item.data("sale-price", data.sale_price || "0");
-
-						if (data.categories) {
-							$item.data("categories", data.categories.join(","));
-						}
-						if (data.tags) {
-							$item.data("tags", data.tags.join(","));
-						}
 					}
 				});
 			}
 
-			// Append to grid with animation
+			// Add with animation
 			$newProducts.css({
 				opacity: 0,
 				transform: "translateY(20px)",
@@ -268,72 +299,65 @@
 			$newProducts.each(function (index) {
 				$(this)
 					.delay(index * 50)
-					.animate(
-						{
-							opacity: 1,
-						},
-						300,
-						function () {
-							$(this).css("transform", "translateY(0)");
-						},
-					);
+					.animate({ opacity: 1 }, 300, function () {
+						$(this).css("transform", "translateY(0)");
+					});
 			});
 
-			console.log(`✅ Appended ${$newProducts.length} products`);
+			console.log("✅ Products appended successfully!");
 
-			// Trigger custom event for third-party scripts
+			// Trigger event
 			$(document).trigger("loop-grid-products-loaded", [$newProducts]);
 		}
 
 		showLoadingMessage() {
-			const $loader = this.$wrapper.find(".loop-loading-message");
-			if ($loader.length) {
-				$loader.stop(true, true).fadeIn(300);
-			}
+			this.$wrapper.find(".loop-loading-message").fadeIn(200);
 		}
 
 		hideLoadingMessage() {
-			const $loader = this.$wrapper.find(".loop-loading-message");
-			if ($loader.length) {
-				$loader.stop(true, true).fadeOut(300);
-			}
+			this.$wrapper.find(".loop-loading-message").fadeOut(200);
 		}
 
 		showNoMoreMessage() {
-			const $noMore = this.$wrapper.find(".loop-no-more-message");
-			if ($noMore.length) {
-				$noMore.stop(true, true).fadeIn(300);
-			}
+			this.$wrapper.find(".loop-no-more-message").fadeIn(200);
 		}
 	}
 
 	// Initialize on document ready
 	$(document).ready(function () {
-		console.log("📦 Checking for pagination wrappers...");
+		console.log("📦 Document ready - Looking for pagination wrappers...");
 
 		const $wrappers = $(".custom-product-loop-wrapper");
 		console.log(`Found ${$wrappers.length} wrapper(s)`);
 
-		$wrappers.each(function () {
+		if ($wrappers.length === 0) {
+			console.warn("⚠️ No pagination wrappers found on page");
+			console.log("Page HTML:", $("body").html().substring(0, 1000));
+		}
+
+		$wrappers.each(function (index) {
+			console.log(`Initializing wrapper ${index + 1}:`, this);
 			const $wrapper = $(this);
 			const paginationType = $wrapper.data("pagination-type");
 
 			if (paginationType && paginationType !== "none") {
-				console.log(`🎯 Initializing ${paginationType} for widget`);
-				new LoopGridPaginationFixed(this);
+				console.log(
+					`🎯 Creating pagination instance for type: ${paginationType}`,
+				);
+				new LoopGridPagination(this);
 			}
 		});
 	});
 
 	// Initialize on Elementor frontend
 	$(window).on("elementor/frontend/init", function () {
-		console.log("🎨 Elementor frontend loaded, reinitializing pagination");
+		console.log("🎨 Elementor frontend init");
 
 		if (typeof elementorFrontend !== "undefined") {
 			elementorFrontend.hooks.addAction(
 				"frontend/element_ready/custom_product_loop_grid.default",
 				function ($scope) {
-					console.log("🔄 Custom product loop grid detected");
+					console.log("🔄 Custom product loop grid ready");
 
 					const $wrapper = $scope.find(
 						".custom-product-loop-wrapper",
@@ -341,42 +365,30 @@
 					const paginationType = $wrapper.data("pagination-type");
 
 					if (paginationType && paginationType !== "none") {
-						new LoopGridPaginationFixed($wrapper[0]);
+						new LoopGridPagination($wrapper[0]);
 					}
 				},
 			);
 		}
 	});
 
-	// Global function for debugging
-	window.debugPagination = function (widgetId) {
-		const $wrapper = widgetId
-			? $(`.custom-product-loop-wrapper[data-widget-id="${widgetId}"]`)
-			: $(".custom-product-loop-wrapper").first();
+	// Debug function
+	window.debugPagination = function () {
+		const $wrapper = $(".custom-product-loop-wrapper").first();
 
-		if ($wrapper.length === 0) {
-			console.error("Wrapper not found");
-			return;
-		}
-
-		console.group("📊 Pagination Debug Info");
+		console.group("📊 Pagination Debug");
+		console.log("Wrapper found:", $wrapper.length > 0);
 		console.log("Widget ID:", $wrapper.data("widget-id"));
-		console.log("Pagination Type:", $wrapper.data("pagination-type"));
+		console.log("Type:", $wrapper.data("pagination-type"));
 		console.log("Current Page:", $wrapper.data("current-page"));
 		console.log("Max Pages:", $wrapper.data("max-pages"));
 		console.log("Button:", $wrapper.find(".loop-load-more-btn"));
 		console.log("Grid:", $wrapper.find(".custom-product-loop-grid"));
-		console.log("Loading Message:", $wrapper.find(".loop-loading-message"));
-		console.log("No More Message:", $wrapper.find(".loop-no-more-message"));
 		console.groupEnd();
 	};
 
 	console.log(
-		"%c💡 Load More Pagination Ready!",
-		"color: #4CAF50; font-weight: bold; font-size: 14px",
-	);
-	console.log("Type: debugPagination() to debug the first pagination widget");
-	console.log(
-		"Type: debugPagination('widget-id') to debug a specific widget",
+		"%c💡 Type debugPagination() to check setup",
+		"color: #00BCD4;",
 	);
 })(jQuery);

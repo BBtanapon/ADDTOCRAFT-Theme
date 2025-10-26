@@ -1,7 +1,8 @@
 <?php
 /**
- * Custom Product Loop Grid Widget - WITH TAG QUERY SUPPORT
+ * Custom Product Loop Grid Widget - WITH TAG QUERY SUPPORT & FIXED PAGINATION
  * Shows all products with the same tags when clicking a tag link
+ * Load More button fully functional
  *
  * @package HelloElementorChild
  */
@@ -352,11 +353,20 @@ class Elementor_Custom_Product_Loop_Grid extends \Elementor\Widget_Base
              data-current-page="<?php echo esc_attr($paged); ?>"
              data-query="<?php echo esc_attr(
              	base64_encode(json_encode($query_args)),
+             ); ?>"
+             data-settings="<?php echo esc_attr(
+             	base64_encode(json_encode($settings)),
              ); ?>">
 
             <div class="<?php echo esc_attr($grid_class); ?>"
                  data-widget-id="<?php echo esc_attr($widget_id); ?>"
-                 data-columns="<?php echo esc_attr($settings["columns"]); ?>">
+                 data-columns="<?php echo esc_attr($settings["columns"]); ?>"
+                 data-columns-tablet="<?php echo esc_attr(
+                 	$settings["columns_tablet"] ?? "2",
+                 ); ?>"
+                 data-columns-mobile="<?php echo esc_attr(
+                 	$settings["columns_mobile"] ?? "1",
+                 ); ?>">
 
                 <?php
                 while ($products_query->have_posts()) {
@@ -432,7 +442,7 @@ class Elementor_Custom_Product_Loop_Grid extends \Elementor\Widget_Base
 	}
 
 	/**
-	 * NEW: Build Query Args with Current Query Support
+	 * Build Query Args with Current Query Support
 	 */
 	private function build_query_args($settings)
 	{
@@ -530,12 +540,7 @@ class Elementor_Custom_Product_Loop_Grid extends \Elementor\Widget_Base
 	}
 
 	/**
-	 * NEW: Get Current Query Args
-	 * Detects current page type and inherits its query:
-	 * - Product Tag archive → shows products with that tag
-	 * - Product Category archive → shows products in that category
-	 * - Search results → shows search results
-	 * - Shop page → shows all products
+	 * Get Current Query Args
 	 */
 	private function get_current_query_args($args, $settings)
 	{
@@ -573,10 +578,6 @@ class Elementor_Custom_Product_Loop_Grid extends \Elementor\Widget_Base
 		// Product Search Results
 		elseif (is_search()) {
 			$args["s"] = get_search_query();
-		}
-		// Shop Page (show all products)
-		elseif (is_shop()) {
-			// Default behavior - all products
 		}
 
 		// Apply sorting
@@ -695,17 +696,56 @@ class Elementor_Custom_Product_Loop_Grid extends \Elementor\Widget_Base
 			return;
 		}
 
-		echo '<div class="loop-pagination-wrapper" style="text-align: center; margin-top: 40px;">';
+		echo '<div class="loop-pagination-wrapper" style="width: 100%; text-align: center; margin-top: 40px; clear: both;">';
 
 		switch ($pagination_type) { case "load_more": ?>
                 <button class="loop-load-more-btn"
                         data-widget-id="<?php echo esc_attr($widget_id); ?>"
-                        data-page="1"
+                        data-page="<?php echo esc_attr(
+                        	$query->query_vars["paged"] ?? 1,
+                        ); ?>"
                         data-max-pages="<?php echo esc_attr(
                         	$query->max_num_pages,
-                        ); ?>">
+                        ); ?>"
+                        style="display: inline-block;
+                               padding: 12px 30px;
+                               background: #1e1e1e;
+                               color: white;
+                               border: none;
+                               border-radius: 4px;
+                               cursor: pointer;
+                               font-weight: 600;
+                               font-size: 14px;
+                               transition: all 0.3s ease;">
                     <?php echo esc_html($settings["load_more_text"]); ?>
                 </button>
+                <div class="loop-loading-message" style="display: none; text-align: center; padding: 20px; color: #666;">
+                    <p>⏳ Loading products...</p>
+                </div>
+                <div class="loop-no-more-message" style="display: none; text-align: center; padding: 20px; color: #999;">
+                    <p>✅ All products loaded</p>
+                </div>
+                <style>
+                    .loop-load-more-btn:hover {
+                        background: #333 !important;
+                        transform: translateY(-2px);
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+                    }
+                    .loop-load-more-btn:disabled {
+                        cursor: not-allowed;
+                        opacity: 0.5;
+                    }
+                </style>
+                <?php break;case "infinite": ?>
+                <div class="loop-infinite-scroll-trigger"
+                     data-threshold="300"
+                     style="height: 1px; visibility: hidden;"></div>
+                <div class="loop-loading-message" style="display: none; text-align: center; padding: 20px;">
+                    <p>⏳ Loading more products...</p>
+                </div>
+                <div class="loop-no-more-message" style="display: none; text-align: center; padding: 20px;">
+                    <p>✅ All products loaded</p>
+                </div>
                 <?php break;case "numbers":
 				echo '<div class="loop-pagination loop-page-numbers">';
 				echo paginate_links([
@@ -760,7 +800,7 @@ class Elementor_Custom_Product_Loop_Grid extends \Elementor\Widget_Base
 				esc_attr($template_id) .
 				'">';
 			echo $css_content;
-			echo "</style>" . "\n";
+			echo "</style>\n";
 		}
 	}
 
