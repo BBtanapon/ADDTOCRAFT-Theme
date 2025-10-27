@@ -1,6 +1,7 @@
 /**
- * Loop Grid Pagination - COMPLETE FIX v3
+ * Loop Grid Pagination - COMPLETE FIX v4
  * Load More & Infinite Scroll - Both Working
+ * FIXES: Click event binding, AJAX data structure, initialization
  *
  * @package HelloElementorChild
  */
@@ -9,7 +10,7 @@
 	"use strict";
 
 	console.log(
-		"%c🚀 Pagination Script Loaded",
+		"%c🚀 Pagination Script Loaded (FIXED)",
 		"color: #4CAF50; font-weight: bold; font-size: 16px;",
 	);
 
@@ -105,29 +106,28 @@
 
 			if ($btn.length === 0) {
 				console.error("❌ Load More button not found!");
-				console.log(
-					"Wrapper HTML:",
-					this.$wrapper.html().substring(0, 500),
-				);
 				return;
 			}
 
 			console.log("✅ Load More button found:", $btn);
-			console.log("Button HTML:", $btn[0].outerHTML);
 
-			// Remove existing handlers
+			// ✅ CRITICAL FIX: Remove ALL existing handlers first
 			$btn.off("click.pagination");
+			$btn.off("click");
 
-			// Bind click event
-			$btn.on("click.pagination", (e) => {
+			// ✅ CRITICAL FIX: Use event delegation to ensure it works
+			this.$wrapper.on("click.pagination", ".loop-load-more-btn", (e) => {
 				e.preventDefault();
 				e.stopPropagation();
 
 				console.log("🖱️ LOAD MORE CLICKED!");
+				console.log("Current page:", this.currentPage);
+				console.log("Max pages:", this.maxPages);
+				console.log("Is loading:", this.isLoading);
 
 				if (this.isLoading) {
 					console.log("⏳ Already loading...");
-					return;
+					return false;
 				}
 
 				const nextPage = this.currentPage + 1;
@@ -136,14 +136,22 @@
 					console.log("✅ No more pages");
 					$btn.hide();
 					this.showNoMoreMessage();
-					return;
+					return false;
 				}
 
 				console.log(`📄 Loading page ${nextPage}/${this.maxPages}`);
 				this.loadMoreProducts(nextPage, $btn);
+
+				return false;
 			});
 
-			console.log("✅ Load More initialized successfully!");
+			console.log("✅ Load More event handler attached!");
+
+			// Test button is clickable
+			$btn.css({
+				"pointer-events": "auto",
+				cursor: "pointer",
+			});
 		}
 
 		initInfiniteScroll() {
@@ -201,7 +209,10 @@
 
 			// Disable button
 			if (this.paginationType === "load_more") {
-				$element.prop("disabled", true).css("opacity", "0.5");
+				$element.prop("disabled", true).css({
+					opacity: "0.5",
+					"pointer-events": "none",
+				});
 			}
 
 			const ajaxData = {
@@ -213,14 +224,14 @@
 				widget_id: this.widgetId,
 			};
 
-			console.log("Sending AJAX data:", ajaxData);
+			console.log("📤 Sending AJAX data:", ajaxData);
 
 			$.ajax({
 				url: loopGridPaginationData.ajaxUrl,
 				type: "POST",
 				data: ajaxData,
 				success: (response) => {
-					console.log("✅ AJAX Response:", response);
+					console.log("📥 AJAX Response received:", response);
 
 					if (response.success && response.data.html) {
 						console.log(
@@ -239,13 +250,17 @@
 							}
 						} else {
 							if (this.paginationType === "load_more") {
-								$element
-									.prop("disabled", false)
-									.css("opacity", "1");
+								$element.prop("disabled", false).css({
+									opacity: "1",
+									"pointer-events": "auto",
+								});
 							}
 						}
 					} else {
 						console.error("❌ Invalid response:", response);
+						alert(
+							"Error loading products. Invalid response from server.",
+						);
 					}
 				},
 				error: (xhr, status, error) => {
@@ -255,7 +270,10 @@
 					alert("Error loading products. Check console for details.");
 
 					if (this.paginationType === "load_more") {
-						$element.prop("disabled", false).css("opacity", "1");
+						$element.prop("disabled", false).css({
+							opacity: "1",
+							"pointer-events": "auto",
+						});
 					}
 				},
 				complete: () => {
@@ -323,30 +341,47 @@
 		}
 	}
 
-	// Initialize on document ready
-	$(document).ready(function () {
-		console.log("📦 Document ready - Looking for pagination wrappers...");
+	// ✅ CRITICAL: Initialize properly on document ready
+	function initializePagination() {
+		console.log("📦 Initializing pagination...");
 
 		const $wrappers = $(".custom-product-loop-wrapper");
 		console.log(`Found ${$wrappers.length} wrapper(s)`);
 
 		if ($wrappers.length === 0) {
 			console.warn("⚠️ No pagination wrappers found on page");
-			console.log("Page HTML:", $("body").html().substring(0, 1000));
 		}
 
 		$wrappers.each(function (index) {
-			console.log(`Initializing wrapper ${index + 1}:`, this);
 			const $wrapper = $(this);
+
+			// Skip if already initialized
+			if ($wrapper.data("pagination-initialized")) {
+				console.log(`Wrapper ${index + 1} already initialized`);
+				return;
+			}
+
 			const paginationType = $wrapper.data("pagination-type");
 
 			if (paginationType && paginationType !== "none") {
 				console.log(
-					`🎯 Creating pagination instance for type: ${paginationType}`,
+					`🎯 Creating pagination instance ${index + 1} for type: ${paginationType}`,
 				);
-				new LoopGridPagination(this);
+				const instance = new LoopGridPagination(this);
+				$wrapper.data("pagination-initialized", true);
+				$wrapper.data("pagination-instance", instance);
 			}
 		});
+	}
+
+	// Initialize on document ready
+	$(document).ready(function () {
+		setTimeout(initializePagination, 500);
+	});
+
+	// Initialize on window load (fallback)
+	$(window).on("load", function () {
+		setTimeout(initializePagination, 1000);
 	});
 
 	// Initialize on Elementor frontend
@@ -362,10 +397,20 @@
 					const $wrapper = $scope.find(
 						".custom-product-loop-wrapper",
 					);
-					const paginationType = $wrapper.data("pagination-type");
 
-					if (paginationType && paginationType !== "none") {
-						new LoopGridPagination($wrapper[0]);
+					if (
+						$wrapper.length &&
+						!$wrapper.data("pagination-initialized")
+					) {
+						const paginationType = $wrapper.data("pagination-type");
+
+						if (paginationType && paginationType !== "none") {
+							const instance = new LoopGridPagination(
+								$wrapper[0],
+							);
+							$wrapper.data("pagination-initialized", true);
+							$wrapper.data("pagination-instance", instance);
+						}
 					}
 				},
 			);
@@ -383,12 +428,25 @@
 		console.log("Current Page:", $wrapper.data("current-page"));
 		console.log("Max Pages:", $wrapper.data("max-pages"));
 		console.log("Button:", $wrapper.find(".loop-load-more-btn"));
+		console.log(
+			"Button visible:",
+			$wrapper.find(".loop-load-more-btn").is(":visible"),
+		);
 		console.log("Grid:", $wrapper.find(".custom-product-loop-grid"));
+		console.log("Initialized:", $wrapper.data("pagination-initialized"));
 		console.groupEnd();
 	};
 
-	console.log(
-		"%c💡 Type debugPagination() to check setup",
-		"color: #00BCD4;",
-	);
+	// Test button clicks
+	window.testButtonClick = function () {
+		const $btn = $(".loop-load-more-btn").first();
+		console.log("Testing button click...");
+		console.log("Button:", $btn);
+		console.log("Button visible:", $btn.is(":visible"));
+		$btn.trigger("click");
+	};
+
+	console.log("%c💡 Debug Commands:", "color: #00BCD4; font-weight: bold;");
+	console.log("   Type: debugPagination() to check setup");
+	console.log("   Type: testButtonClick() to test button");
 })(jQuery);

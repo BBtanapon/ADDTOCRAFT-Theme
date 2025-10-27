@@ -1,8 +1,7 @@
 <?php
 /**
- * Custom Product Loop Grid Widget - WITH TAG QUERY SUPPORT & FIXED PAGINATION
- * Shows all products with the same tags when clicking a tag link
- * Load More button fully functional
+ * Custom Product Loop Grid Widget - WITH "SHOW ALL PRODUCTS" OPTION
+ * Includes option to display unlimited products
  *
  * @package HelloElementorChild
  */
@@ -89,12 +88,41 @@ class Elementor_Custom_Product_Loop_Grid extends \Elementor\Widget_Base
 			],
 		]);
 
+		// ✅ NEW: Show All Products Option
+		$this->add_control("show_all_products", [
+			"label" => __("Show All Products", "hello-elementor-child"),
+			"type" => \Elementor\Controls_Manager::SWITCHER,
+			"label_on" => __("Yes", "hello-elementor-child"),
+			"label_off" => __("No", "hello-elementor-child"),
+			"return_value" => "yes",
+			"default" => "no",
+			"description" => __(
+				"Enable to show ALL products (unlimited). Disables pagination.",
+				"hello-elementor-child",
+			),
+		]);
+
 		$this->add_control("posts_per_page", [
 			"label" => __("Products Per Page", "hello-elementor-child"),
 			"type" => \Elementor\Controls_Manager::NUMBER,
 			"default" => 12,
 			"min" => 1,
 			"max" => 100,
+			"condition" => [
+				"show_all_products!" => "yes",
+			],
+		]);
+
+		$this->add_control("all_products_notice", [
+			"type" => \Elementor\Controls_Manager::RAW_HTML,
+			"raw" =>
+				'<div style="background: #d4edda; padding: 10px; border-left: 4px solid #28a745; margin: 10px 0;">' .
+				"<strong>✅ Show All Products Enabled</strong><br>" .
+				"All products will be displayed. Pagination is disabled." .
+				"</div>",
+			"condition" => [
+				"show_all_products" => "yes",
+			],
 		]);
 
 		$categories = get_terms([
@@ -242,6 +270,21 @@ class Elementor_Custom_Product_Loop_Grid extends \Elementor\Widget_Base
 					"hello-elementor-child",
 				),
 			],
+			"condition" => [
+				"show_all_products!" => "yes",
+			],
+		]);
+
+		$this->add_control("pagination_disabled_notice", [
+			"type" => \Elementor\Controls_Manager::RAW_HTML,
+			"raw" =>
+				'<div style="background: #f8d7da; padding: 10px; border-left: 4px solid #dc3545;">' .
+				"<strong>⚠️ Pagination Disabled</strong><br>" .
+				"Pagination is disabled when 'Show All Products' is enabled." .
+				"</div>",
+			"condition" => [
+				"show_all_products" => "yes",
+			],
 		]);
 
 		$this->add_control("load_more_text", [
@@ -250,6 +293,7 @@ class Elementor_Custom_Product_Loop_Grid extends \Elementor\Widget_Base
 			"default" => __("Load More", "hello-elementor-child"),
 			"condition" => [
 				"pagination_type" => "load_more",
+				"show_all_products!" => "yes",
 			],
 		]);
 
@@ -314,10 +358,18 @@ class Elementor_Custom_Product_Loop_Grid extends \Elementor\Widget_Base
 
 		$this->rendered_product_ids = [];
 
-		$paged = get_query_var("paged") ? get_query_var("paged") : 1;
+		// ✅ Check if "Show All Products" is enabled
+		$show_all = $settings["show_all_products"] === "yes";
+
+		$paged = $show_all
+			? 1
+			: (get_query_var("paged")
+				? get_query_var("paged")
+				: 1);
 
 		$query_args = $this->build_query_args($settings);
 		$query_args["paged"] = $paged;
+
 		$products_query = new WP_Query($query_args);
 
 		if (!$products_query->have_posts()) {
@@ -341,7 +393,8 @@ class Elementor_Custom_Product_Loop_Grid extends \Elementor\Widget_Base
 		$grid_class .=
 			" elementor-grid-mobile-" . ($settings["columns_mobile"] ?? "1");
 
-		$pagination_type = $settings["pagination_type"];
+		// ✅ Disable pagination if showing all products
+		$pagination_type = $show_all ? "none" : $settings["pagination_type"];
 		?>
         <div class="custom-product-loop-wrapper"
              id="product-loop-<?php echo esc_attr($widget_id); ?>"
@@ -356,7 +409,8 @@ class Elementor_Custom_Product_Loop_Grid extends \Elementor\Widget_Base
              ); ?>"
              data-settings="<?php echo esc_attr(
              	base64_encode(json_encode($settings)),
-             ); ?>">
+             ); ?>"
+             data-show-all="<?php echo esc_attr($show_all ? "yes" : "no"); ?>">
 
             <div class="<?php echo esc_attr($grid_class); ?>"
                  data-widget-id="<?php echo esc_attr($widget_id); ?>"
@@ -413,11 +467,15 @@ class Elementor_Custom_Product_Loop_Grid extends \Elementor\Widget_Base
                 ?>
             </div>
 
-            <?php $this->render_pagination(
-            	$products_query,
-            	$settings,
-            	$widget_id,
-            ); ?>
+            <?php // Only show pagination if NOT showing all products
+
+		if (!$show_all) {
+            	$this->render_pagination(
+            		$products_query,
+            		$settings,
+            		$widget_id,
+            	);
+            } ?>
         </div>
 
         <style>
@@ -442,14 +500,17 @@ class Elementor_Custom_Product_Loop_Grid extends \Elementor\Widget_Base
 	}
 
 	/**
-	 * Build Query Args with Current Query Support
+	 * Build Query Args with "Show All Products" support
 	 */
 	private function build_query_args($settings)
 	{
+		// ✅ Check if showing all products
+		$show_all = $settings["show_all_products"] === "yes";
+
 		$args = [
 			"post_type" => "product",
 			"post_status" => "publish",
-			"posts_per_page" => $settings["posts_per_page"],
+			"posts_per_page" => $show_all ? -1 : $settings["posts_per_page"], // ✅ -1 for all products
 			"ignore_sticky_posts" => true,
 			"no_found_rows" => false,
 		];
@@ -953,6 +1014,14 @@ class Elementor_Custom_Product_Loop_Grid extends \Elementor\Widget_Base
             .default-product-card .button:hover {
                 background: #1e1e1e;
                 color: white;
+            }
+
+            /* Show All Products Notice */
+            .show-all-products-notice {
+                font-size: 14px;
+            }
+            .show-all-products-notice strong {
+                color: #155724;
             }
         </style>
         <?php

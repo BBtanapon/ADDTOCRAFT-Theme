@@ -1,7 +1,8 @@
 <?php
 /**
- * Theme functions and definitions - COMPLETE WORKING VERSION
+ * Theme functions and definitions - COMPLETE FIXED VERSION
  * All features: Auto Attributes, Filters, Pagination (Load More & Infinite Scroll)
+ * FIXED: Load More button click event and AJAX handler
  *
  * @package HelloElementorChild
  */
@@ -10,13 +11,15 @@ if (!defined("ABSPATH")) {
 	exit();
 }
 
-define("HELLO_ELEMENTOR_CHILD_VERSION", "2.1.2");
+define("HELLO_ELEMENTOR_CHILD_VERSION", "2.1.3");
 
 // =============================================================================
 // CORE THEME SETUP
 // =============================================================================
 
-add_action("wp_enqueue_scripts", "hello_elementor_child_scripts_styles", 20);
+/**
+ * Enqueue child theme styles
+ */
 function hello_elementor_child_scripts_styles()
 {
 	wp_enqueue_style(
@@ -26,14 +29,145 @@ function hello_elementor_child_scripts_styles()
 		HELLO_ELEMENTOR_CHILD_VERSION,
 	);
 }
+add_action("wp_enqueue_scripts", "hello_elementor_child_scripts_styles", 20);
 
-add_action("wp_enqueue_scripts", "load_dashicons_for_non_logged_in_users");
+/**
+ * Load Dashicons for non-logged-in users
+ */
 function load_dashicons_for_non_logged_in_users()
 {
 	if (!is_user_logged_in()) {
 		wp_enqueue_style("dashicons");
 	}
 }
+add_action("wp_enqueue_scripts", "load_dashicons_for_non_logged_in_users");
+
+/**
+ * Register ACF REST API routes
+ */
+function register_acf_rest_routes()
+{
+	register_rest_route("options", "/all", [
+		"methods" => "GET",
+		"callback" => "acf_options_route",
+	]);
+
+	register_rest_route("options", "/all", [
+		"methods" => "POST",
+		"callback" => "acf_update_route",
+	]);
+}
+add_action("rest_api_init", "register_acf_rest_routes");
+
+/**
+ * Get all ACF fields with select field choices
+ *
+ * @return WP_REST_Response
+ */
+function acf_options_route()
+{
+	$fields = get_fields("options");
+
+	if (!$fields) {
+		return new WP_REST_Response(["message" => "No fields found"], 404);
+	}
+
+	$field_name = "select_product_show_cast";
+	$field = acf_get_field($field_name);
+
+	if ($field && isset($field["choices"])) {
+		$fields["_choices"][$field_name] = $field["choices"];
+	}
+
+	return new WP_REST_Response($fields, 200);
+}
+
+/**
+ * Update ACF options via REST API
+ *
+ * @param WP_REST_Request $request The REST request object.
+ * @return WP_REST_Response
+ */
+function acf_update_route(WP_REST_Request $request)
+{
+	$parameters = $request->get_params();
+	$updated_fields = [];
+	$errors = [];
+
+	foreach ($parameters as $field_name => $value) {
+		if (get_field_object($field_name, "option")) {
+			$result = update_field($field_name, $value, "option");
+
+			if ($result) {
+				$updated_fields[$field_name] = $value;
+			} else {
+				$errors[$field_name] = "Failed to update";
+			}
+		}
+	}
+
+	return new WP_REST_Response(
+		[
+			"message" => "Update operation completed",
+			"updated" => $updated_fields,
+			"errors" => $errors,
+		],
+		200,
+	);
+}
+
+/**
+ * Add CORS headers for images
+ */
+function add_cors_headers_for_images()
+{
+	if (preg_match('/\.(jpg|jpeg|png|gif|webp)$/i', $_SERVER["REQUEST_URI"])) {
+		header("Access-Control-Allow-Origin: *");
+		header("Access-Control-Allow-Methods: GET, OPTIONS");
+		header(
+			"Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept",
+		);
+	}
+}
+add_action("init", "add_cors_headers_for_images");
+
+/**
+ * Allow users without published posts in REST API
+ *
+ * @param array           $prepared_args Array of arguments for WP_User_Query.
+ * @param WP_REST_Request $request       The REST request object.
+ * @return array Modified arguments.
+ */
+function prefix_remove_has_published_posts_from_wp_api_user_query(
+	$prepared_args,
+	$request,
+) {
+	unset($prepared_args["has_published_posts"]);
+	return $prepared_args;
+}
+add_filter(
+	"rest_user_query",
+	"prefix_remove_has_published_posts_from_wp_api_user_query",
+	10,
+	2,
+);
+
+/**
+ * Fix for Elementor blocking ACF in REST API
+ *
+ * @param WP_REST_Response $response The response object.
+ * @param WP_Post          $post     Post object.
+ * @param WP_REST_Request  $request  Request object.
+ * @return WP_REST_Response Modified response.
+ */
+function acf_to_rest_api($response, $post, $request)
+{
+	if (function_exists("get_fields") && isset($post->ID)) {
+		$response->data["acf"] = get_fields($post->ID);
+	}
+	return $response;
+}
+add_filter("rest_prepare_page", "acf_to_rest_api", 10, 3);
 
 // =============================================================================
 // ELEMENTOR CSS - SIMPLIFIED
@@ -41,17 +175,21 @@ function load_dashicons_for_non_logged_in_users()
 
 /**
  * Ensure CSS files are generated
+ *
+ * @param object $css_file The CSS file object.
  */
-add_action("elementor/css-file/post/enqueue", "ensure_css_file_generated");
 function ensure_css_file_generated($css_file)
 {
 	$css_file->update();
 }
+add_action("elementor/css-file/post/enqueue", "ensure_css_file_generated");
 
 /**
  * Force CSS regeneration on save
+ *
+ * @param int   $post_id     The post ID.
+ * @param array $editor_data The editor data.
  */
-add_action("elementor/editor/after_save", "force_css_regeneration", 10, 2);
 function force_css_regeneration($post_id, $editor_data)
 {
 	if (!class_exists("\Elementor\Core\Files\CSS\Post")) {
@@ -59,29 +197,36 @@ function force_css_regeneration($post_id, $editor_data)
 	}
 
 	$css_file = \Elementor\Core\Files\CSS\Post::create($post_id);
+
 	if ($css_file) {
 		$css_file->update();
 	}
 }
+add_action("elementor/editor/after_save", "force_css_regeneration", 10, 2);
 
 /**
  * Clear and regenerate all CSS (one-time on theme update)
  */
-add_action("init", "maybe_regenerate_all_elementor_css");
 function maybe_regenerate_all_elementor_css()
 {
-	if (!get_option("elementor_css_regenerated_v5")) {
+	if (!get_option("elementor_css_regenerated_v6")) {
 		if (class_exists("\Elementor\Plugin")) {
 			\Elementor\Plugin::$instance->files_manager->clear_cache();
-			update_option("elementor_css_regenerated_v5", true);
+			update_option("elementor_css_regenerated_v6", true);
 		}
 	}
 }
+add_action("init", "maybe_regenerate_all_elementor_css");
 
 // =============================================================================
 // AUTO ATTRIBUTES SYSTEM
 // =============================================================================
 
+/**
+ * Get WooCommerce attributes only
+ *
+ * @return array Array of WooCommerce attributes.
+ */
 function get_woocommerce_attributes_only()
 {
 	if (!class_exists("WooCommerce")) {
@@ -124,6 +269,12 @@ function get_woocommerce_attributes_only()
 	return $attributes;
 }
 
+/**
+ * Get all product attributes
+ *
+ * @param WC_Product $product The product object.
+ * @return array Array of product attributes.
+ */
 function get_all_product_attributes($product)
 {
 	if (!$product) {
@@ -144,24 +295,29 @@ function get_all_product_attributes($product)
 		"attributes" => [],
 	];
 
+	// Handle variable products
 	if ($product->is_type("variable")) {
 		$variation_prices = $product->get_variation_prices(true);
+
 		if (!empty($variation_prices["price"])) {
 			$attributes_data["min_price"] = min($variation_prices["price"]);
 			$attributes_data["max_price"] = max($variation_prices["price"]);
 			$attributes_data["price"] = $attributes_data["min_price"];
 		}
+
 		if (!empty($variation_prices["regular_price"])) {
 			$attributes_data["regular_price"] = min(
 				$variation_prices["regular_price"],
 			);
 		}
+
 		if (!empty($variation_prices["sale_price"]) && $product->is_on_sale()) {
 			$attributes_data["sale_price"] = min(
 				$variation_prices["sale_price"],
 			);
 		}
 	} else {
+		// Handle simple products
 		$attributes_data[
 			"regular_price"
 		] = (float) $product->get_regular_price();
@@ -174,16 +330,19 @@ function get_all_product_attributes($product)
 		}
 	}
 
+	// Get categories
 	$categories = get_the_terms($product->get_id(), "product_cat");
 	if ($categories && !is_wp_error($categories)) {
 		$attributes_data["categories"] = wp_list_pluck($categories, "term_id");
 	}
 
+	// Get tags
 	$tags = get_the_terms($product->get_id(), "product_tag");
 	if ($tags && !is_wp_error($tags)) {
 		$attributes_data["tags"] = wp_list_pluck($tags, "term_id");
 	}
 
+	// Get product attributes
 	$product_attributes = $product->get_attributes();
 
 	foreach ($product_attributes as $attribute) {
@@ -213,256 +372,186 @@ function get_all_product_attributes($product)
 }
 
 /**
- * Output products data JSON
+ * AJAX handler for loading more products
  */
-add_action("wp_footer", "output_products_data_json", 100);
-function output_products_data_json()
-{
-	if (!class_exists("WooCommerce")) {
-		return;
-	}
-
-	$products_data = [];
-
-	$args = [
-		"limit" => -1,
-		"status" => "publish",
-	];
-
-	if (is_product_category()) {
-		$category = get_queried_object();
-		$args["category"] = [$category->slug];
-	} elseif (is_product_tag()) {
-		$tag = get_queried_object();
-		$args["tag"] = [$tag->slug];
-	}
-
-	$products = wc_get_products($args);
-
-	foreach ($products as $product) {
-		$product_data = get_all_product_attributes($product);
-		if (!empty($product_data)) {
-			$products_data[$product->get_id()] = $product_data;
-		}
-	}
-
-	if (empty($products_data)) {
-		return;
-	}
-	?>
-<script id="loop-grid-products-data" type="application/json">
-<?php echo wp_json_encode($products_data); ?>
-</script>
-<script>
-window.loopGridProductsData = <?php echo wp_json_encode($products_data); ?>;
-console.log('%c📦 Products data loaded:', 'color: #4CAF50; font-weight: bold;', Object.keys(window.loopGridProductsData).length + ' products');
-</script>
-<?php
-}
-
-function get_all_available_attributes()
-{
-	return get_woocommerce_attributes_only();
-}
-
-// =============================================================================
-// ENQUEUE SCRIPTS - CRITICAL FOR PAGINATION
-// =============================================================================
-
-add_action("wp_enqueue_scripts", "enqueue_all_filter_assets");
-function enqueue_all_filter_assets()
-{
-	if (!did_action("elementor/loaded")) {
-		return;
-	}
-
-	// CSS
-	wp_enqueue_style(
-		"loop-grid-filter-styles",
-		get_stylesheet_directory_uri() . "/assets/css/product-filter.css",
-		[],
-		HELLO_ELEMENTOR_CHILD_VERSION,
-	);
-
-	// Auto attributes
-	wp_enqueue_script(
-		"loop-grid-auto-attributes",
-		get_stylesheet_directory_uri() . "/assets/js/auto-attributes.js",
-		["jquery"],
-		HELLO_ELEMENTOR_CHILD_VERSION,
-		true,
-	);
-
-	// Filter script
-	wp_enqueue_script(
-		"loop-grid-filter-script",
-		get_stylesheet_directory_uri() . "/assets/js/loop-grid-filter.js",
-		["jquery", "elementor-frontend"],
-		HELLO_ELEMENTOR_CHILD_VERSION,
-		true,
-	);
-
-	// Force CSS loader
-	wp_enqueue_script(
-		"force-template-css",
-		get_stylesheet_directory_uri() . "/assets/js/force-template-css.js",
-		["jquery", "elementor-frontend"],
-		HELLO_ELEMENTOR_CHILD_VERSION,
-		true,
-	);
-
-	// CRITICAL: Pagination script with proper dependencies
-	wp_enqueue_script(
-		"custom-loop-grid-pagination",
-		get_stylesheet_directory_uri() . "/assets/js/loop-grid-pagination.js",
-		["jquery", "elementor-frontend"],
-		HELLO_ELEMENTOR_CHILD_VERSION,
-		true,
-	);
-
-	// Loop Grid Layout Fix
-	wp_enqueue_script(
-		"fix-loop-grid-layout",
-		get_stylesheet_directory_uri() . "/assets/js/fix-loop-grid-layout.js",
-		["jquery", "elementor-frontend"],
-		HELLO_ELEMENTOR_CHILD_VERSION,
-		true,
-	);
-
-	// CRITICAL: Localize scripts
-	wp_localize_script("loop-grid-auto-attributes", "autoAttributesData", [
-		"ajaxUrl" => admin_url("admin-ajax.php"),
-		"nonce" => wp_create_nonce("loop_grid_filter_nonce"),
-	]);
-
-	wp_localize_script("loop-grid-filter-script", "loopGridFilterData", [
-		"ajaxUrl" => admin_url("admin-ajax.php"),
-		"nonce" => wp_create_nonce("loop_grid_filter_nonce"),
-	]);
-
-	// CRITICAL: Pagination localization
-	wp_localize_script(
-		"custom-loop-grid-pagination",
-		"loopGridPaginationData",
-		[
-			"ajaxUrl" => admin_url("admin-ajax.php"),
-			"nonce" => wp_create_nonce("loop_grid_pagination_nonce"),
-		],
-	);
-}
-
-// =============================================================================
-// AJAX PAGINATION HANDLER - COMPLETE WORKING VERSION
-// =============================================================================
-
-add_action("wp_ajax_load_more_products", "ajax_load_more_products");
-add_action("wp_ajax_nopriv_load_more_products", "ajax_load_more_products");
-
 function ajax_load_more_products()
 {
-	// Debug logging
-	error_log("🔄 AJAX Load More Products Called");
-	error_log("POST Data: " . print_r($_POST, true));
+	error_log("🔵 AJAX Load More Products Called");
+	error_log("POST data: " . print_r($_POST, true));
 
 	// Verify nonce
 	if (
 		!isset($_POST["nonce"]) ||
-		!wp_verify_nonce($_POST["nonce"], "loop_grid_pagination_nonce")
+		!wp_verify_nonce($_POST["nonce"], "loop_grid_pagination")
 	) {
 		error_log("❌ Nonce verification failed");
-		wp_send_json_error(["message" => "Security check failed"]);
+		wp_send_json_error(["message" => "Invalid security token"]);
 		return;
 	}
 
-	// Get parameters
-	$page = isset($_POST["page"]) ? intval($_POST["page"]) : 1;
-	$query_args = isset($_POST["query_args"])
-		? json_decode(stripslashes($_POST["query_args"]), true)
-		: [];
-	$settings = isset($_POST["settings"])
-		? json_decode(stripslashes($_POST["settings"]), true)
-		: [];
+	// Get and validate parameters
+	$page = isset($_POST["page"]) ? absint($_POST["page"]) : 1;
 	$widget_id = isset($_POST["widget_id"])
 		? sanitize_text_field($_POST["widget_id"])
 		: "";
+	$post_id = isset($_POST["post_id"]) ? absint($_POST["post_id"]) : 0;
+	$element_id = isset($_POST["element_id"])
+		? sanitize_text_field($_POST["element_id"])
+		: "";
+	$posts_per_page = isset($_POST["posts_per_page"])
+		? absint($_POST["posts_per_page"])
+		: 12;
 
-	error_log("📄 Loading page: " . $page);
-	error_log("Query Args: " . print_r($query_args, true));
+	error_log(
+		"Page: {$page}, Widget: {$widget_id}, Post: {$post_id}, Element: {$element_id}",
+	);
 
-	// Update page number
-	$query_args["paged"] = $page;
+	// Get widget settings
+	$elementor = \Elementor\Plugin::instance();
+	$document = $elementor->documents->get($post_id);
+
+	if (!$document) {
+		error_log("❌ Document not found");
+		wp_send_json_error(["message" => "Document not found"]);
+		return;
+	}
+
+	$elements = $document->get_elements_data();
+	$settings = null;
+
+	// Find widget settings recursively
+	array_walk_recursive(
+		$elements,
+		function ($value, $key) use ($element_id, &$settings) {
+			if ($key === "id" && $value === $element_id) {
+				$settings = func_get_arg(2);
+			}
+		},
+		$settings,
+	);
+
+	if (!$settings) {
+		error_log("❌ Widget settings not found");
+		wp_send_json_error(["message" => "Widget settings not found"]);
+		return;
+	}
+
+	error_log("Widget settings found");
+
+	// Get active filters
+	$active_filters = isset($_POST["filters"])
+		? json_decode(stripslashes($_POST["filters"]), true)
+		: [];
+	error_log("Active filters: " . print_r($active_filters, true));
+
+	// Build query arguments
+	$args = [
+		"post_type" => "product",
+		"post_status" => "publish",
+		"posts_per_page" => $posts_per_page,
+		"paged" => $page,
+		"orderby" => isset($settings["orderby"])
+			? $settings["orderby"]
+			: "date",
+		"order" => isset($settings["order"]) ? $settings["order"] : "DESC",
+	];
+
+	// Apply filters
+	if (!empty($active_filters)) {
+		$tax_query = ["relation" => "AND"];
+
+		foreach ($active_filters as $taxonomy => $term_ids) {
+			if (!empty($term_ids)) {
+				$tax_query[] = [
+					"taxonomy" => $taxonomy,
+					"field" => "term_id",
+					"terms" => array_map("intval", $term_ids),
+					"operator" => "IN",
+				];
+			}
+		}
+
+		if (count($tax_query) > 1) {
+			$args["tax_query"] = $tax_query;
+		}
+	}
+
+	error_log("Query args: " . print_r($args, true));
 
 	// Execute query
-	$products_query = new WP_Query($query_args);
-
-	error_log("Found posts: " . $products_query->post_count);
+	$products_query = new WP_Query($args);
+	error_log(
+		"Found {$products_query->found_posts} products, Max pages: {$products_query->max_num_pages}",
+	);
 
 	if (!$products_query->have_posts()) {
 		error_log("❌ No products found");
-		wp_send_json_error([
-			"message" => __("No more products found.", "hello-elementor-child"),
-		]);
+		wp_send_json_error(["message" => "No more products found"]);
 		return;
 	}
 
 	// Generate HTML
 	ob_start();
 
+	$rendered_count = 0;
+
 	while ($products_query->have_posts()) {
 
 		$products_query->the_post();
-		global $product;
+		$rendered_count++;
+
+		$product_id = get_the_ID();
+		$product = wc_get_product($product_id);
 
 		if (!$product) {
 			continue;
 		}
 
-		$product_id = $product->get_id();
-
-		// Get product data
+		// Prepare product data attributes
 		$product_data = [
-			"product-id" => $product_id,
-			"title" => $product->get_name(),
+			"id" => $product_id,
+			"title" => get_the_title(),
 			"price" => $product->get_price(),
-			"regular-price" => $product->get_regular_price(),
-			"sale-price" => $product->get_sale_price(),
 		];
 
-		// Variable product
+		// Add price data
 		if ($product->is_type("variable")) {
 			$variation_prices = $product->get_variation_prices(true);
+
 			if (!empty($variation_prices["price"])) {
 				$product_data["min-price"] = min($variation_prices["price"]);
 				$product_data["max-price"] = max($variation_prices["price"]);
 			}
 		}
 
-		// Categories
+		// Add categories
 		$categories = get_the_terms($product_id, "product_cat");
 		if ($categories && !is_wp_error($categories)) {
-			$product_data["categories"] = implode(
+			$product_data["product_cat"] = implode(
 				",",
 				wp_list_pluck($categories, "term_id"),
 			);
 		}
 
-		// Tags
+		// Add tags
 		$tags = get_the_terms($product_id, "product_tag");
 		if ($tags && !is_wp_error($tags)) {
-			$product_data["tags"] = implode(
+			$product_data["product_tag"] = implode(
 				",",
 				wp_list_pluck($tags, "term_id"),
 			);
 		}
 
-		// Attributes
+		// Add attributes
 		$product_attributes = $product->get_attributes();
+
 		foreach ($product_attributes as $attribute) {
 			if (!$attribute->is_taxonomy()) {
 				continue;
 			}
 
 			$taxonomy = $attribute->get_name();
+
 			if (strpos($taxonomy, "pa_") !== 0) {
 				continue;
 			}
@@ -489,16 +578,19 @@ function ajax_load_more_products()
 		<article class="e-loop-item product-loop-item product-id-<?php echo esc_attr(
   	$product_id,
   ); ?>" <?php echo $data_attrs; ?>>
-			<?php if (
+			<?php // Check if using custom template
+   if (
    	!empty($settings["use_custom_template"]) &&
    	$settings["use_custom_template"] === "yes" &&
    	!empty($settings["template_id"])
    ) {
+   	error_log("Using custom template: " . $settings["template_id"]);
    	echo \Elementor\Plugin::instance()->frontend->get_builder_content(
    		$settings["template_id"],
    		true,
    	);
    } else {
+   	error_log("Using default product card");
    	render_default_product_card_for_ajax($product);
    } ?>
 		</article>
@@ -509,18 +601,35 @@ function ajax_load_more_products()
 
 	$html = ob_get_clean();
 
-	error_log("✅ Generated HTML length: " . strlen($html));
+	error_log("✅ Rendered {$rendered_count} products");
+	error_log("HTML length: " . strlen($html));
+
+	if (empty($html)) {
+		error_log("❌ Generated HTML is empty!");
+		wp_send_json_error([
+			"message" => "Failed to generate HTML",
+			"debug" => "HTML output is empty",
+		]);
+		return;
+	}
+
+	error_log("🎉 Success! Sending response...");
 
 	wp_send_json_success([
 		"html" => $html,
 		"page" => $page,
 		"max_pages" => $products_query->max_num_pages,
 		"found_posts" => $products_query->found_posts,
+		"rendered_count" => $rendered_count,
 	]);
 }
+add_action("wp_ajax_load_more_products", "ajax_load_more_products");
+add_action("wp_ajax_nopriv_load_more_products", "ajax_load_more_products");
 
 /**
  * Render default product card for AJAX
+ *
+ * @param WC_Product $product The product object.
  */
 function render_default_product_card_for_ajax($product)
 {
@@ -531,7 +640,10 @@ function render_default_product_card_for_ajax($product)
 	<div class="default-product-card">
 		<div class="product-badges">
 			<?php if ($is_on_sale): ?>
-				<span class="badge-sale"><?php _e("Sale!", "hello-elementor-child"); ?></span>
+				<span class="badge-sale"><?php esc_html_e(
+    	"Sale!",
+    	"hello-elementor-child",
+    ); ?></span>
 			<?php endif; ?>
 			<?php if ($main_tag): ?>
 				<span class="badge-tag"><?php echo esc_html($main_tag); ?></span>
@@ -556,7 +668,7 @@ function render_default_product_card_for_ajax($product)
 			<div class="product-actions">
 				<?php if ($product->is_type("variable")): ?>
 					<a href="<?php echo esc_url(get_permalink()); ?>" class="btn-select-options">
-						<?php _e("SELECT OPTIONS", "hello-elementor-child"); ?>
+						<?php esc_html_e("SELECT OPTIONS", "hello-elementor-child"); ?>
 					</a>
 				<?php else: ?>
 					<?php woocommerce_template_loop_add_to_cart(); ?>
@@ -571,33 +683,31 @@ function render_default_product_card_for_ajax($product)
 // WOOCOMMERCE AJAX ADD TO CART
 // =============================================================================
 
-add_action(
-	"wp_ajax_woocommerce_ajax_add_to_cart",
-	"woocommerce_ajax_add_to_cart",
-);
-add_action(
-	"wp_ajax_nopriv_woocommerce_ajax_add_to_cart",
-	"woocommerce_ajax_add_to_cart",
-);
-
+/**
+ * AJAX add to cart handler
+ */
 function woocommerce_ajax_add_to_cart()
 {
 	$product_id = apply_filters(
 		"woocommerce_add_to_cart_product_id",
 		absint($_POST["product_id"]),
 	);
+
 	$quantity = empty($_POST["quantity"])
 		? 1
 		: wc_stock_amount($_POST["quantity"]);
+
 	$variation_id = isset($_POST["variation_id"])
 		? absint($_POST["variation_id"])
 		: 0;
+
 	$passed_validation = apply_filters(
 		"woocommerce_add_to_cart_validation",
 		true,
 		$product_id,
 		$quantity,
 	);
+
 	$product_status = get_post_status($product_id);
 
 	if (
@@ -627,15 +737,24 @@ function woocommerce_ajax_add_to_cart()
 
 	wp_die();
 }
+add_action(
+	"wp_ajax_woocommerce_ajax_add_to_cart",
+	"woocommerce_ajax_add_to_cart",
+);
+add_action(
+	"wp_ajax_nopriv_woocommerce_ajax_add_to_cart",
+	"woocommerce_ajax_add_to_cart",
+);
 
 // =============================================================================
 // ELEMENTOR WIDGETS
 // =============================================================================
 
-add_action(
-	"elementor/elements/categories_registered",
-	"add_elementor_widget_categories",
-);
+/**
+ * Add custom Elementor widget categories
+ *
+ * @param object $elements_manager The elements manager instance.
+ */
 function add_elementor_widget_categories($elements_manager)
 {
 	$elements_manager->add_category("custom-widgets", [
@@ -643,8 +762,16 @@ function add_elementor_widget_categories($elements_manager)
 		"icon" => "fa fa-plug",
 	]);
 }
+add_action(
+	"elementor/elements/categories_registered",
+	"add_elementor_widget_categories",
+);
 
-add_action("elementor/widgets/register", "register_custom_elementor_widgets");
+/**
+ * Register custom Elementor widgets
+ *
+ * @param object $widgets_manager The widgets manager instance.
+ */
 function register_custom_elementor_widgets($widgets_manager)
 {
 	$widget_files = [
@@ -658,39 +785,51 @@ function register_custom_elementor_widgets($widgets_manager)
 
 	foreach ($widget_files as $file) {
 		$file_path = get_stylesheet_directory() . "/elementor-widgets/" . $file;
+
 		if (file_exists($file_path)) {
 			require_once $file_path;
 		}
 	}
 
+	// Register widgets
 	if (class_exists("Elementor_Login_Logout_Widget")) {
 		$widgets_manager->register(new \Elementor_Login_Logout_Widget());
 	}
+
 	if (class_exists("Elementor_Product_Image_Hover_Widget")) {
 		$widgets_manager->register(new \Elementor_Product_Image_Hover_Widget());
 	}
+
 	if (class_exists("Elementor_Product_Badge_Widget")) {
 		$widgets_manager->register(new \Elementor_Product_Badge_Widget());
 	}
+
 	if (class_exists("Elementor_Loop_Grid_Filter_Widget")) {
 		$widgets_manager->register(new \Elementor_Loop_Grid_Filter_Widget());
 	}
+
 	if (class_exists("Elementor_Product_Add_To_Cart")) {
 		$widgets_manager->register(new \Elementor_Product_Add_To_Cart());
 	}
+
 	if (class_exists("Elementor_Custom_Product_Loop_Grid")) {
 		$widgets_manager->register(new \Elementor_Custom_Product_Loop_Grid());
 	}
 }
+add_action("elementor/widgets/register", "register_custom_elementor_widgets");
 
-add_action("init", "create_elementor_widgets_directory");
+/**
+ * Create Elementor widgets directory
+ */
 function create_elementor_widgets_directory()
 {
 	$widgets_dir = get_stylesheet_directory() . "/elementor-widgets";
+
 	if (!file_exists($widgets_dir)) {
 		wp_mkdir_p($widgets_dir);
 	}
 }
+add_action("init", "create_elementor_widgets_directory");
 
 // =============================================================================
 // CUSTOM LOOP QUERIES
@@ -698,6 +837,7 @@ function create_elementor_widgets_directory()
 
 $loop_queries_file =
 	get_stylesheet_directory() . "/includes/class-elementor-loop-queries.php";
+
 if (file_exists($loop_queries_file)) {
 	require_once $loop_queries_file;
 	new Custom_Elementor_Loop_Query_Sources();
@@ -708,12 +848,71 @@ if (file_exists($loop_queries_file)) {
 // =============================================================================
 
 /**
- * Check if AJAX is working
+ * Test AJAX handler
  */
-add_action("wp_ajax_test_ajax", "test_ajax_handler");
-add_action("wp_ajax_nopriv_test_ajax", "test_ajax_handler");
-
 function test_ajax_handler()
 {
 	wp_send_json_success(["message" => "AJAX is working!"]);
 }
+add_action("wp_ajax_test_ajax", "test_ajax_handler");
+add_action("wp_ajax_nopriv_test_ajax", "test_ajax_handler");
+
+/**
+ * Debug: Output current pagination setup (admin only)
+ */
+function debug_pagination_setup()
+{
+	if (!current_user_can("manage_options")) {
+		return;
+	} ?>
+	<script>
+	console.log('%c🔧 Debug Mode Active', 'color: #FF9800; font-weight: bold;');
+	console.log('Pagination Data:', typeof loopGridPaginationData !== 'undefined' ? loopGridPaginationData : 'NOT LOADED');
+	console.log('jQuery loaded:', typeof jQuery !== 'undefined');
+	console.log('Elementor loaded:', typeof elementorFrontend !== 'undefined');
+	</script>
+	<?php
+}
+add_action("wp_footer", "debug_pagination_setup", 999);
+// ลบ Site Icon ของ WordPress
+remove_action("wp_head", "wp_site_icon", 99);
+
+function add_favicon_with_acf_fallback()
+{
+	$favicon_image = "";
+
+	// ACF favicon
+	$acf_favicon = get_field("1_0_favicon_image", "option");
+	if ($acf_favicon) {
+		if (is_numeric($acf_favicon)) {
+			$image = wp_get_attachment_image_src($acf_favicon, [512, 512]);
+			if ($image) {
+				$favicon_image = $image[0];
+			}
+		} elseif (is_array($acf_favicon) && isset($acf_favicon["ID"])) {
+			$image = wp_get_attachment_image_src($acf_favicon["ID"], [
+				512,
+				512,
+			]);
+			if ($image) {
+				$favicon_image = $image[0];
+			}
+		} elseif (is_array($acf_favicon) && isset($acf_favicon["url"])) {
+			$favicon_image = $acf_favicon["url"];
+		} elseif (is_string($acf_favicon)) {
+			$favicon_image = $acf_favicon;
+		}
+	}
+
+	if ($favicon_image) {
+		echo '<link rel="icon" href="' .
+			esc_url($favicon_image) .
+			'" sizes="512x512" />';
+	} else {
+		// ถ้าไม่มี ACF favicon ให้ WordPress Site Icon ทำงานตามปกติ
+		if (function_exists("wp_site_icon")) {
+			wp_site_icon();
+		}
+	}
+}
+add_action("wp_head", "add_favicon_with_acf_fallback", 1);
